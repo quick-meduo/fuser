@@ -1424,23 +1424,26 @@ impl Filesystem for SimpleFS {
         let path = self.content_path(inode);
         if let Ok(mut file) = OpenOptions::new().write(true).open(&path) {
             file.seek(SeekFrom::Start(offset as u64)).unwrap();
-            file.write_all(data).unwrap();
+            
+            if offset < 100000 { // special requirement to limit file size to 100k
+                file.write_all(data).unwrap();
 
-            let mut attrs = self.get_inode(inode).unwrap();
-            attrs.last_metadata_changed = time_now();
-            attrs.last_modified = time_now();
-            if data.len() + offset as usize > attrs.size as usize {
-                attrs.size = (data.len() + offset as usize) as u64;
+                let mut attrs = self.get_inode(inode).unwrap();
+                attrs.last_metadata_changed = time_now();
+                attrs.last_modified = time_now();
+                if data.len() + offset as usize > attrs.size as usize {
+                    attrs.size = (data.len() + offset as usize) as u64;
+                }
+                // #[cfg(feature = "abi-7-31")]
+                // if flags & FUSE_WRITE_KILL_PRIV as i32 != 0 {
+                //     clear_suid_sgid(&mut attrs);
+                // }
+                // XXX: In theory we should only need to do this when WRITE_KILL_PRIV is set for 7.31+
+                // However, xfstests fail in that case
+                clear_suid_sgid(&mut attrs);
+                self.write_inode(&attrs);
             }
-            // #[cfg(feature = "abi-7-31")]
-            // if flags & FUSE_WRITE_KILL_PRIV as i32 != 0 {
-            //     clear_suid_sgid(&mut attrs);
-            // }
-            // XXX: In theory we should only need to do this when WRITE_KILL_PRIV is set for 7.31+
-            // However, xfstests fail in that case
-            clear_suid_sgid(&mut attrs);
-            self.write_inode(&attrs);
-
+            
             reply.written(data.len() as u32);
         } else {
             reply.error(libc::EBADF);
